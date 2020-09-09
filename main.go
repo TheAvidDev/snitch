@@ -1,13 +1,12 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
   "time"
 
-	"github.com/gorilla/mux"
+  "github.com/labstack/echo"
+  "github.com/labstack/echo/middleware"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -27,7 +26,7 @@ type Event struct {
 type Project struct {
   ID    uint    `json:"id" gorm:"primaryKey"`
   Name  string  `json:"name"`
-  Event []Event `json:"-" gorm:"foreignkey:ProjectID"`
+  Event []Event `json:"events,omitempty" gorm:"foreignkey:ProjectID"`
 }
 
 /*
@@ -49,88 +48,70 @@ func initDB() {
 /*
  * API
  */
-func createProject(w http.ResponseWriter, r *http.Request) {
-  var project Project
-  err := json.NewDecoder(r.Body).Decode(&project)
-  if err != nil {
-      http.Error(w, "Bad JSON data", http.StatusBadRequest)
-      return
+func createProject(c echo.Context) (err error) {
+  project := new(Project)
+  if err = c.Bind(project); err != nil {
+    return
   }
-
   db.Create(&project)
-  w.Header().Set("Content-Type", "application/json")
-  json.NewEncoder(w).Encode(project)
+  return c.JSON(http.StatusOK, project)
 }
 
-func getProjects(w http.ResponseWriter, r *http.Request) {
+func getProjects(c echo.Context) error {
   var projects []Project
   db.Find(&projects)
-  w.Header().Set("Content-Type", "application/json")
-  json.NewEncoder(w).Encode(projects)
+  return c.JSON(http.StatusOK, projects)
 }
 
-func getProject(w http.ResponseWriter, r *http.Request) {
-  params := mux.Vars(r)
-  projectID := params["projectID"]
+func getProject(c echo.Context) error {
+  projectID := c.Param("id")
 
   var project Project
   db.Preload("Event").First(&project, projectID)
-  w.Header().Set("Content-Type", "application/json")
-  json.NewEncoder(w).Encode(project)
+  return c.JSON(http.StatusOK, project)
 }
 
-func createEvent(w http.ResponseWriter, r *http.Request) {
-  var event Event
-  err := json.NewDecoder(r.Body).Decode(&event)
-  if err != nil {
-      http.Error(w, "Bad JSON data", http.StatusBadRequest)
-      return
+func createEvent(c echo.Context) (err error) {
+  event := new(Event)
+  if err = c.Bind(event); err != nil {
+    return
   }
-
   db.Create(&event)
-  w.Header().Set("Content-Type", "application/json")
-  json.NewEncoder(w).Encode(event)
+  return c.JSON(http.StatusOK, event)
 }
 
-func getEvents(w http.ResponseWriter, r *http.Request) {
+func getEvents(c echo.Context) error {
   var events []Event
   db.Find(&events)
-  w.Header().Set("Content-Type", "application/json")
-  json.NewEncoder(w).Encode(events)
+  return c.JSON(http.StatusOK, events)
 }
 
-func getEvent(w http.ResponseWriter, r *http.Request) {
-  params := mux.Vars(r)
-  eventID := params["eventID"]
+func getEvent(c echo.Context) error {
+  eventID := c.Param("id")
 
   var event Event
   db.First(&event, eventID)
-  w.Header().Set("Content-Type", "application/json")
-  json.NewEncoder(w).Encode(event)
+  return c.JSON(http.StatusOK, event)
 }
 
 /*
  * Main Snitch 
  */
 func main() {
-  // The naming of StrictSlash is bad -- true/false are inverted
-  // See: https://github.com/gorilla/mux/issues/145
-  r := mux.NewRouter().StrictSlash(true)
-  ar := r.PathPrefix("/api").Subrouter()
-  ar.HandleFunc("/projects", createProject).Methods("POST")
-  ar.HandleFunc("/projects", getProjects).Methods("GET")
-  ar.HandleFunc("/projects/{projectID}", getProject).Methods("GET")
-  ar.HandleFunc("/events", createEvent).Methods("POST")
-  ar.HandleFunc("/events", getEvents).Methods("GET")
-  ar.HandleFunc("/events/{eventID}", getEvent).Methods("GET")
+  e := echo.New()
+  e.Pre(middleware.RemoveTrailingSlash())
+  e.Use(middleware.Logger())
+  e.Use(middleware.Recover())
+
+  a := e.Group("/api")
+  a.POST("/projects", createProject)
+  a.GET("/projects", getProjects)
+  a.GET("/projects/:id", getProject)
+  a.POST("/events", createEvent)
+  a.GET("/events", getEvents)
+  a.GET("/events/:id", getEvent)
 
   initDB()
 
-  srv := &http.Server{
-		Handler: r,
-		Addr: "127.0.0.1:8000",
-		WriteTimeout: 15 * time.Second,
-		ReadTimeout: 15 * time.Second,
-	}
-	log.Fatal(srv.ListenAndServe())
+  e.Logger.Fatal(e.Start(":8000"))
 }
